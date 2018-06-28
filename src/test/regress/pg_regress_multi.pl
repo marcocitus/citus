@@ -288,8 +288,11 @@ push(@pgOptions, '-c', "citus.remote_task_check_interval=1ms");
 push(@pgOptions, '-c', "citus.shard_replication_factor=2");
 push(@pgOptions, '-c', "citus.node_connection_timeout=${connectionTimeout}");
 
-# make tests reproducible by never trying to negotiate ssl
-push(@pgOptions, '-c', "citus.sslmode=disable");
+if ($useMitmproxy)
+{
+  # make tests reproducible by never trying to negotiate ssl
+  push(@pgOptions, '-c', "citus.node_conninfo=sslmode=disable");
+}
 
 if ($useMitmproxy)
 {
