@@ -146,7 +146,9 @@ class ResetHandler(Handler):
     def _handle(self, flow, message):
         flow.kill() # tell mitmproxy this connection should be closed
 
-        client_conn = flow.client_conn # connections.ClientConnection(tcp.BaseHandler)
+        # this is a mitmproxy.connections.ClientConnection(mitmproxy.tcp.BaseHandler)
+        client_conn = flow.client_conn
+        # this is a regular socket object
         conn = client_conn.connection
 
         # cause linux to send a RST
