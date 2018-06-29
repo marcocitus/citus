@@ -522,7 +522,8 @@ sub ShutdownServers()
         }
 	if ($mitmPid != 0)
 	{
-          kill('INT', $mitmPid) or warn "could not interrupt mitmdump";
+	  # '-' means signal the process group, 2 is SIGINT
+          kill(-2, $mitmPid) or warn "could not interrupt mitmdump";
 	}
         $serversAreShutdown = "TRUE";
     }
@@ -551,7 +552,8 @@ if ($useMitmproxy)
   $mitmPid = $childPid;
 
   if ($mitmPid eq 0) {
-    exec("mitmdump --rawtcp -p 57640 --mode reverse:localhost:57638 -s mitmscripts/fluent.py --set fifo=$mitmFifoPath --set flow_detail=0 --set termlog_verbosity=warn >mitmproxy.output 2>&1");
+    setpgrp(0,0); # we're about to spawn both a shell and a mitmdump, kill them as a group
+    exec("mitmdump --rawtcp -p 57640 --mode reverse:localhost:57638 -s mitmscripts/fluent.py --set fifo=$mitmFifoPath --set flow_detail=0 --set termlog_verbosity=warn >proxy.output 2>&1");
     die 'could not start mitmdump';
   }
 }
