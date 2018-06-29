@@ -136,7 +136,8 @@ class Query(FrontendMessage):
         query = message.query
         query = Query.normalize_shards(query)
         query = Query.normalize_timestamps(query)
-        return "Query(query={}".format(query)
+        query = Query.normalize_assign_txn_id(query)
+        return "Query(query={})".format(query)
 
     @staticmethod
     def normalize_shards(content):
@@ -171,10 +172,23 @@ class Query(FrontendMessage):
 
         return re.sub(pattern, 'XXXX-XX-XX XX:XX:XX.XXXXXX-XX', content)
 
+    @staticmethod
+    def normalize_assign_txn_id(content):
+        '''
+        For example:
+        >>> normalize_assign_txn_id('SELECT assign_distributed_transaction_id(0, 52, ...')
+        'SELECT assign_distributed_transaction_id(0, XX, ...'
+        '''
+
+        pattern = re.compile(
+            'assign_distributed_transaction_id\s*\('  # a method call
+            '\s*[0-9]+\s*,'  # an integer first parameter
+            '\s*(?P<transaction_id>[0-9]+)'  # an integer second parameter
+        )
+        result = content
         for match in pattern.finditer(content):
-            span = match.span()
-            replacement = 'XXXX-XX-XX XX:XX:XX.XXXXXX-XX'
-            result = result[:span[0]] + replacement + result[span[1]:]
+            span = match.span('transaction_id')
+            result = result[:span[0]] + 'XX' + result[span[1]:]
         return result
 
 class Terminate(FrontendMessage):
