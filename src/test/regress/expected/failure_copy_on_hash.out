@@ -1,0 +1,154 @@
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+-- With one placement COPY should error out and placement should stay healthy.
+SET citus.shard_replication_factor TO 1;
+SET citus.shard_count to 4;
+CREATE TABLE test_table(id int, value_1 int);
+SELECT create_distributed_table('test_table','id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+SELECT citus.mitmproxy('conn.kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+\COPY test_table FROM stdin delimiter ',';
+WARNING:  connection error: localhost:57640
+DETAIL:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  COPY test_table, line 2: "3,4"
+ERROR:  could not connect to any active placements
+CONTEXT:  COPY test_table, line 2: "3,4"
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT * FROM pg_dist_shard_placement;
+ shardid | shardstate | shardlength | nodename  | nodeport | placementid 
+---------+------------+-------------+-----------+----------+-------------
+  102008 |          1 |           0 | localhost |    57637 |           1
+  102010 |          1 |           0 | localhost |    57637 |           3
+  102009 |          1 |           0 | localhost |    57640 |           2
+  102011 |          1 |           0 | localhost |    57640 |           4
+(4 rows)
+
+-- Now, kill the connection while copying the data
+SELECT citus.mitmproxy('conn.onCopyData().kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+\COPY test_table FROM stdin delimiter ',';
+ERROR:  failed to COPY to shard 102009 on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT * FROM pg_dist_shard_placement;
+ shardid | shardstate | shardlength | nodename  | nodeport | placementid 
+---------+------------+-------------+-----------+----------+-------------
+  102008 |          1 |           0 | localhost |    57637 |           1
+  102010 |          1 |           0 | localhost |    57637 |           3
+  102009 |          1 |           0 | localhost |    57640 |           2
+  102011 |          1 |           0 | localhost |    57640 |           4
+(4 rows)
+
+-- With two placement, should we error out or mark untouched shard placements as inactive?
+SET citus.shard_replication_factor TO 2;
+CREATE TABLE test_table_2(id int, value_1 int);
+SELECT create_distributed_table('test_table_2','id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+SELECT citus.mitmproxy('conn.kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+\COPY test_table_2 FROM stdin delimiter ',';
+WARNING:  connection error: localhost:57640
+DETAIL:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  COPY test_table_2, line 1: "1,2"
+WARNING:  connection error: localhost:57640
+DETAIL:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  COPY test_table_2, line 2: "3,4"
+WARNING:  connection error: localhost:57640
+DETAIL:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  COPY test_table_2, line 3: "6,7"
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT * FROM pg_dist_shard_placement;
+ shardid | shardstate | shardlength | nodename  | nodeport | placementid 
+---------+------------+-------------+-----------+----------+-------------
+  102008 |          1 |           0 | localhost |    57637 |           1
+  102010 |          1 |           0 | localhost |    57637 |           3
+  102012 |          1 |           0 | localhost |    57637 |           5
+  102013 |          1 |           0 | localhost |    57637 |           8
+  102014 |          1 |           0 | localhost |    57637 |           9
+  102015 |          1 |           0 | localhost |    57637 |          12
+  102009 |          1 |           0 | localhost |    57640 |           2
+  102011 |          1 |           0 | localhost |    57640 |           4
+  102012 |          3 |           0 | localhost |    57640 |           6
+  102013 |          3 |           0 | localhost |    57640 |           7
+  102014 |          3 |           0 | localhost |    57640 |          10
+  102015 |          1 |           0 | localhost |    57640 |          11
+(12 rows)
+
+SELECT citus.mitmproxy('conn.onCopyData().kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+\COPY test_table_2 FROM stdin delimiter ',';
+ERROR:  failed to COPY to shard 102015 on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT * FROM pg_dist_shard_placement;
+ shardid | shardstate | shardlength | nodename  | nodeport | placementid 
+---------+------------+-------------+-----------+----------+-------------
+  102008 |          1 |           0 | localhost |    57637 |           1
+  102010 |          1 |           0 | localhost |    57637 |           3
+  102012 |          1 |           0 | localhost |    57637 |           5
+  102013 |          1 |           0 | localhost |    57637 |           8
+  102014 |          1 |           0 | localhost |    57637 |           9
+  102015 |          1 |           0 | localhost |    57637 |          12
+  102009 |          1 |           0 | localhost |    57640 |           2
+  102011 |          1 |           0 | localhost |    57640 |           4
+  102012 |          3 |           0 | localhost |    57640 |           6
+  102013 |          3 |           0 | localhost |    57640 |           7
+  102014 |          3 |           0 | localhost |    57640 |          10
+  102015 |          1 |           0 | localhost |    57640 |          11
+(12 rows)
+
