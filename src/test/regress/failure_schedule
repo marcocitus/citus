@@ -3,4 +3,4 @@ test: failure_test_helpers
 
 # this should only be run by pg_regress_multi, you don't need it
 test: failure_setup
-test: failure_copy_on_hash
+test: failure_create_table
