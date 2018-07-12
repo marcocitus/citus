@@ -1,0 +1,163 @@
+-- 
+--  Failure tests for COPY to reference tables 
+-- 
+CREATE SCHEMA create_distributed_table_non_empty_failure;
+SET search_path TO 'create_distributed_table_non_empty_failure';
+
+SELECT citus.mitmproxy('conn.allow()');
+
+-- we'll start with replication factor 1
+SET citus.shard_replication_factor TO 1;
+SET citus.shard_count to 4;
+
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+
+-- in the first test, kill the first connection we sent from the coordinator
+SELECT citus.mitmproxy('conn.kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- in the first test, cancel the first connection we sent from the coordinator
+SELECT citus.mitmproxy('conn.cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- kill as soon as the coordinator sends CREATE SCHEMA
+SELECT citus.mitmproxy('conn.onQuery(query="^CREATE SCHEMA").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+
+-- cancel as soon as the coordinator sends CREATE SCHEMA
+SELECT citus.mitmproxy('conn.onQuery(query="^CREATE SCHEMA").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+SELECT run_command_on_workers($$DROP SCHEMA IF EXISTS create_distributed_table_non_empty_failure$$);
+
+-- kill as soon as the coordinator sends begin
+SELECT citus.mitmproxy('conn.onQuery(query="^BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+
+-- cancel as soon as the coordinator sends begin
+-- shards will be created because we ignore cancel requests during the shard creation 
+-- Interrupts are hold in CreateShardsWithRoundRobinPolicy
+SELECT citus.mitmproxy('conn.onQuery(query="^BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+DROP TABLE test_table ;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+
+-- kill as soon as the coordinator sends CREATE TABLE
+SELECT citus.mitmproxy('conn.onQuery(query="CREATE TABLE").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- kill as soon as the coordinator sends COPY
+SELECT citus.mitmproxy('conn.onQuery(query="COPY").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- kill when the COPY is completed, it should be rollbacked properly
+SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- cancel as soon as the coordinator sends COPY, table 
+-- should not be created and rollbacked properly
+SELECT citus.mitmproxy('conn.onQuery(query="COPY").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- cancel when the COPY is completed, it should be rollbacked properly
+SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- immediately kill when we see prepare transaction to see if the command
+-- successfully rollbacked the created shards
+-- we don't want to see the prepared transaction numbers in the warnings
+SET client_min_messages TO ERROR;
+SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- immediately cancel when we see prepare transaction to see if the command
+-- successfully rollbacked the created shards
+SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- immediately kill after we get prepare transaction complete
+-- to see if the command successfully rollbacked the created shards
+SELECT citus.mitmproxy('conn.onCommandComplete(command="PREPARE TRANSACTION").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- immediately cancel after we get prepare transaction complete
+-- to see if the command successfully rollbacked the created shards
+SELECT citus.mitmproxy('conn.onCommandComplete(command="PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- kill as soon as the coordinator sends COMMIT
+-- shards should be created and kill should not affect
+SELECT citus.mitmproxy('conn.onQuery(query="^COMMIT PREPARED").kill()');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+DROP TABLE test_table ;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+
+-- cancel as soon as the coordinator sends COMMIT
+-- shards should be created and kill should not affect
+SELECT citus.mitmproxy('conn.onQuery(query="^COMMIT PREPARED").cancel(' ||  pg_backend_pid() || ')');
+SELECT create_distributed_table('test_table', 'id');
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+DROP TABLE test_table ;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+
+-- kill as soon as the coordinator sends ROLLBACK
+-- the command can be rollbacked
+SELECT citus.mitmproxy('conn.onQuery(query="^ROLLBACK").kill()');
+BEGIN;
+SELECT create_distributed_table('test_table', 'id');
+ROLLBACK;
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+-- cancel as soon as the coordinator sends ROLLBACK
+-- should be rollbacked 
+SELECT citus.mitmproxy('conn.onQuery(query="^ROLLBACK").cancel(' ||  pg_backend_pid() || ')');
+BEGIN;
+SELECT create_distributed_table('test_table', 'id');
+ROLLBACK;
+SELECT citus.mitmproxy('conn.allow()');
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+
+DROP SCHEMA create_distributed_table_non_empty_failure CASCADE;

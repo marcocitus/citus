@@ -1,0 +1,520 @@
+-- 
+--  Failure tests for COPY to reference tables 
+-- 
+CREATE SCHEMA create_distributed_table_non_empty_failure;
+SET search_path TO 'create_distributed_table_non_empty_failure';
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+-- we'll start with replication factor 1
+SET citus.shard_replication_factor TO 1;
+SET citus.shard_count to 4;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+-- in the first test, kill the first connection we sent from the coordinator
+SELECT citus.mitmproxy('conn.kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  connection error: localhost:57640
+DETAIL:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- in the first test, cancel the first connection we sent from the coordinator
+SELECT citus.mitmproxy('conn.cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- kill as soon as the coordinator sends CREATE SCHEMA
+SELECT citus.mitmproxy('conn.onQuery(query="^CREATE SCHEMA").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+ run_command_on_workers 
+------------------------
+ (localhost,57637,t,1)
+ (localhost,57640,t,0)
+(2 rows)
+
+-- cancel as soon as the coordinator sends CREATE SCHEMA
+SELECT citus.mitmproxy('conn.onQuery(query="^CREATE SCHEMA").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+ run_command_on_workers 
+------------------------
+ (localhost,57637,t,1)
+ (localhost,57640,t,1)
+(2 rows)
+
+SELECT run_command_on_workers($$DROP SCHEMA IF EXISTS create_distributed_table_non_empty_failure$$);
+      run_command_on_workers       
+-----------------------------------
+ (localhost,57637,t,"DROP SCHEMA")
+ (localhost,57640,t,"DROP SCHEMA")
+(2 rows)
+
+-- kill as soon as the coordinator sends begin
+SELECT citus.mitmproxy('conn.onQuery(query="^BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+WARNING:  connection not open
+CONTEXT:  while executing command on localhost:57640
+ERROR:  connection error: localhost:57640
+DETAIL:  connection not open
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+ run_command_on_workers 
+------------------------
+ (localhost,57637,t,1)
+ (localhost,57640,t,1)
+(2 rows)
+
+-- cancel as soon as the coordinator sends begin
+-- shards will be created because we ignore cancel requests during the shard creation 
+-- Interrupts are hold in CreateShardsWithRoundRobinPolicy
+SELECT citus.mitmproxy('conn.onQuery(query="^BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+WARNING:  cancel requests are ignored during shard creation
+NOTICE:  Copying data from local table...
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     4
+(1 row)
+
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'create_distributed_table_non_empty_failure'$$);
+ run_command_on_workers 
+------------------------
+ (localhost,57637,t,1)
+ (localhost,57640,t,1)
+(2 rows)
+
+DROP TABLE test_table ;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+-- kill as soon as the coordinator sends CREATE TABLE
+SELECT citus.mitmproxy('conn.onQuery(query="CREATE TABLE").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- kill as soon as the coordinator sends COPY
+SELECT citus.mitmproxy('conn.onQuery(query="COPY").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+NOTICE:  Copying data from local table...
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- kill when the COPY is completed, it should be rollbacked properly
+SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+NOTICE:  Copying data from local table...
+ERROR:  failed to COPY to shard 102027 on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- cancel as soon as the coordinator sends COPY, table 
+-- should not be created and rollbacked properly
+SELECT citus.mitmproxy('conn.onQuery(query="COPY").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+NOTICE:  Copying data from local table...
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- cancel when the COPY is completed, it should be rollbacked properly
+SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+NOTICE:  Copying data from local table...
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- immediately kill when we see prepare transaction to see if the command
+-- successfully rollbacked the created shards
+-- we don't want to see the prepared transaction numbers in the warnings
+SET client_min_messages TO ERROR;
+SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  connection not open
+CONTEXT:  while executing command on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- immediately cancel when we see prepare transaction to see if the command
+-- successfully rollbacked the created shards
+SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- immediately kill after we get prepare transaction complete
+-- to see if the command successfully rollbacked the created shards
+SELECT citus.mitmproxy('conn.onCommandComplete(command="PREPARE TRANSACTION").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  connection not open
+CONTEXT:  while executing command on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- immediately cancel after we get prepare transaction complete
+-- to see if the command successfully rollbacked the created shards
+SELECT citus.mitmproxy('conn.onCommandComplete(command="PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- kill as soon as the coordinator sends COMMIT
+-- shards should be created and kill should not affect
+SELECT citus.mitmproxy('conn.onQuery(query="^COMMIT PREPARED").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     4
+(1 row)
+
+DROP TABLE test_table ;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+-- cancel as soon as the coordinator sends COMMIT
+-- shards should be created and kill should not affect
+SELECT citus.mitmproxy('conn.onQuery(query="^COMMIT PREPARED").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     4
+(1 row)
+
+DROP TABLE test_table ;
+CREATE TABLE test_table(id int, value_1 int);
+INSERT INTO test_table VALUES (1,1),(2,2),(3,3),(4,4);
+-- kill as soon as the coordinator sends ROLLBACK
+-- the command can be rollbacked
+SELECT citus.mitmproxy('conn.onQuery(query="^ROLLBACK").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+BEGIN;
+SELECT create_distributed_table('test_table', 'id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+ROLLBACK;
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+-- cancel as soon as the coordinator sends ROLLBACK
+-- should be rollbacked 
+SELECT citus.mitmproxy('conn.onQuery(query="^ROLLBACK").cancel(' ||  pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+BEGIN;
+SELECT create_distributed_table('test_table', 'id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+ROLLBACK;
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='create_distributed_table_non_empty_failure.test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+DROP SCHEMA create_distributed_table_non_empty_failure CASCADE;
