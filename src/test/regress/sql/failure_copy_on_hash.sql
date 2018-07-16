@@ -4,7 +4,7 @@
 
 CREATE SCHEMA copy_distributed_table;
 SET search_path TO 'copy_distributed_table';
-SET citus.next_shard_id TO 210000;
+SET citus.next_shard_id TO 1710000;
 
 SELECT citus.mitmproxy('conn.allow()');
 
@@ -146,7 +146,7 @@ SELECT create_distributed_table('test_table_2','id');
 
 SELECT citus.mitmproxy('conn.kill()');
 
--- Note that data won't be sent to shard 210007, so it is not marked as invalid.
+-- Note that data won't be sent to shard 1710007, so it is not marked as invalid.
 \COPY test_table_2 FROM stdin delimiter ',';
 1,2
 3,4

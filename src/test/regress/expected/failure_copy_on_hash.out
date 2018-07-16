@@ -3,7 +3,7 @@
 --
 CREATE SCHEMA copy_distributed_table;
 SET search_path TO 'copy_distributed_table';
-SET citus.next_shard_id TO 210000;
+SET citus.next_shard_id TO 1710000;
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -68,7 +68,7 @@ SELECT citus.mitmproxy('conn.onCopyData().kill()');
 (1 row)
 
 \COPY test_table FROM stdin delimiter ',';
-ERROR:  failed to COPY to shard 210001 on localhost:57640
+ERROR:  failed to COPY to shard 1710001 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -123,7 +123,7 @@ SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY 1").kill()');
 (1 row)
 
 \COPY test_table FROM stdin delimiter ',';
-ERROR:  failed to COPY to shard 210001 on localhost:57640
+ERROR:  failed to COPY to shard 1710001 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -274,7 +274,7 @@ SELECT citus.mitmproxy('conn.kill()');
  
 (1 row)
 
--- Note that data won't be sent to shard 210007, so it is not marked as invalid.
+-- Note that data won't be sent to shard 1710007, so it is not marked as invalid.
 \COPY test_table_2 FROM stdin delimiter ',';
 WARNING:  connection error: localhost:57640
 DETAIL:  server closed the connection unexpectedly
@@ -305,14 +305,14 @@ SELECT pds.logicalrelid, pdsd.shardid, pdsd.shardstate
 	ORDER BY shardid, nodeport;
  logicalrelid | shardid | shardstate 
 --------------+---------+------------
- test_table_2 |  210004 |          1
- test_table_2 |  210004 |          3
- test_table_2 |  210005 |          1
- test_table_2 |  210005 |          3
- test_table_2 |  210006 |          1
- test_table_2 |  210006 |          3
- test_table_2 |  210007 |          1
- test_table_2 |  210007 |          1
+ test_table_2 | 1710004 |          1
+ test_table_2 | 1710004 |          3
+ test_table_2 | 1710005 |          1
+ test_table_2 | 1710005 |          3
+ test_table_2 | 1710006 |          1
+ test_table_2 | 1710006 |          3
+ test_table_2 | 1710007 |          1
+ test_table_2 | 1710007 |          1
 (8 rows)
 
 -- Create test_table_2 again to have healthy one
@@ -352,14 +352,14 @@ SELECT pds.logicalrelid, pdsd.shardid, pdsd.shardstate
 	ORDER BY shardid, nodeport;
  logicalrelid | shardid | shardstate 
 --------------+---------+------------
- test_table_2 |  210008 |          1
- test_table_2 |  210008 |          1
- test_table_2 |  210009 |          1
- test_table_2 |  210009 |          1
- test_table_2 |  210010 |          1
- test_table_2 |  210010 |          1
- test_table_2 |  210011 |          1
- test_table_2 |  210011 |          1
+ test_table_2 | 1710008 |          1
+ test_table_2 | 1710008 |          1
+ test_table_2 | 1710009 |          1
+ test_table_2 | 1710009 |          1
+ test_table_2 | 1710010 |          1
+ test_table_2 | 1710010 |          1
+ test_table_2 | 1710011 |          1
+ test_table_2 | 1710011 |          1
 (8 rows)
 
 -- Create test_table_2 again to have healthy one
@@ -381,7 +381,7 @@ SELECT citus.mitmproxy('conn.onCopyData().kill()');
 (1 row)
 
 \COPY test_table_2 FROM stdin delimiter ',';
-ERROR:  failed to COPY to shard 210014 on localhost:57640
+ERROR:  failed to COPY to shard 1710012 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -396,14 +396,14 @@ SELECT pds.logicalrelid, pdsd.shardid, pdsd.shardstate
 	ORDER BY shardid, nodeport;
  logicalrelid | shardid | shardstate 
 --------------+---------+------------
- test_table_2 |  210012 |          1
- test_table_2 |  210012 |          1
- test_table_2 |  210013 |          1
- test_table_2 |  210013 |          1
- test_table_2 |  210014 |          1
- test_table_2 |  210014 |          1
- test_table_2 |  210015 |          1
- test_table_2 |  210015 |          1
+ test_table_2 | 1710012 |          1
+ test_table_2 | 1710012 |          1
+ test_table_2 | 1710013 |          1
+ test_table_2 | 1710013 |          1
+ test_table_2 | 1710014 |          1
+ test_table_2 | 1710014 |          1
+ test_table_2 | 1710015 |          1
+ test_table_2 | 1710015 |          1
 (8 rows)
 
 DROP SCHEMA copy_distributed_table CASCADE;
