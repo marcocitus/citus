@@ -38,11 +38,36 @@ SELECT count(*) FROM pg_class WHERE relname LIKE 'test_table%';
 
 \c - - - :master_port
 SET search_path TO 'failure_create_table';
+-- kill as soon as the coordinator sends CREATE SCHEMA
+SELECT citus.mitmproxy('conn.onQuery(query="^CREATE SCHEMA").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table', 'id');
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
  
 (1 row)
+
+SELECT count(*) FROM pg_dist_shard;
+ count 
+-------
+     0
+(1 row)
+
+SELECT run_command_on_workers($$SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'failure_create_table'$$);
+ run_command_on_workers 
+------------------------
+ (localhost,57637,t,1)
+ (localhost,57640,t,0)
+(2 rows)
 
 -- Now, kill the connection just after transaction is opened on
 -- workers.
@@ -117,6 +142,58 @@ SELECT citus.mitmproxy('conn.allow()');
 
 DROP TABLE test_table;
 CREATE TABLE test_table(id int, value_1 int);
+-- Kill the connection while with colocate_with option
+CREATE TABLE temp_table(id int, value_1 int);
+SELECT create_distributed_table('temp_table','id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+SELECT citus.mitmproxy('conn.onQuery(query="CREATE TABLE").kill()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table','id',colocate_with=>'temp_table');
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+SELECT citus.mitmproxy('conn.onQuery(query="CREATE TABLE").cancel(' || pg_backend_pid() || ')');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT create_distributed_table('test_table','id',colocate_with=>'temp_table');
+ERROR:  canceling statement due to user request
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT count(*) FROM pg_dist_shard WHERE logicalrelid='test_table'::regclass;
+ count 
+-------
+     0
+(1 row)
+
+DROP TABLE temp_table;
 -- Kill the connection after worker sends "PREPARE TRANSACTION" ack
 SELECT citus.mitmproxy('conn.onQuery(query="^PREPARE TRANSACTION").kill()');
  mitmproxy 
@@ -506,6 +583,13 @@ SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
  
+(1 row)
+
+-- Show that there is no pending transaction
+SELECT recover_prepared_transactions();
+ recover_prepared_transactions 
+-------------------------------
+                             0
 (1 row)
 
 DROP SCHEMA failure_create_table CASCADE;
