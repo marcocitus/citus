@@ -3,6 +3,7 @@
 --
 CREATE SCHEMA copy_distributed_table;
 SET search_path TO 'copy_distributed_table';
+SET citus.next_shard_id TO 210000;
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -26,8 +27,7 @@ CREATE VIEW unhealthy_shard_count AS
 	pg_dist_shard pds 
 	ON pdsp.shardid=pds.shardid 
 	WHERE logicalrelid='copy_distributed_table.test_table'::regclass AND shardstate != 1;
--- Just kill the connection after getting the first response back
--- from the worker.
+-- Just kill the connection after sending the first query to the worker.
 SELECT citus.mitmproxy('conn.kill()');
  mitmproxy 
 -----------
@@ -68,7 +68,7 @@ SELECT citus.mitmproxy('conn.onCopyData().kill()');
 (1 row)
 
 \COPY test_table FROM stdin delimiter ',';
-ERROR:  failed to COPY to shard 102009 on localhost:57640
+ERROR:  failed to COPY to shard 210001 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -123,7 +123,7 @@ SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY 1").kill()');
 (1 row)
 
 \COPY test_table FROM stdin delimiter ',';
-ERROR:  failed to COPY to shard 102009 on localhost:57640
+ERROR:  failed to COPY to shard 210001 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -257,6 +257,8 @@ SELECT count(*) FROM test_table;
      0
 (1 row)
 
+DROP TABLE test_table CASCADE;
+NOTICE:  drop cascades to view unhealthy_shard_count
 -- With two placement, should we error out or mark untouched shard placements as inactive?
 SET citus.shard_replication_factor TO 2;
 CREATE TABLE test_table_2(id int, value_1 int);
@@ -272,6 +274,7 @@ SELECT citus.mitmproxy('conn.kill()');
  
 (1 row)
 
+-- Note that data won't be sent to shard 210007, so it is not marked as invalid.
 \COPY test_table_2 FROM stdin delimiter ',';
 WARNING:  connection error: localhost:57640
 DETAIL:  server closed the connection unexpectedly
@@ -294,23 +297,83 @@ SELECT citus.mitmproxy('conn.allow()');
  
 (1 row)
 
-SELECT * FROM pg_dist_shard_placement;
- shardid | shardstate | shardlength | nodename  | nodeport | placementid 
----------+------------+-------------+-----------+----------+-------------
-  102008 |          1 |           0 | localhost |    57637 |           1
-  102010 |          1 |           0 | localhost |    57637 |           3
-  102012 |          1 |           0 | localhost |    57637 |           5
-  102013 |          1 |           0 | localhost |    57637 |           8
-  102014 |          1 |           0 | localhost |    57637 |           9
-  102015 |          1 |           0 | localhost |    57637 |          12
-  102009 |          1 |           0 | localhost |    57640 |           2
-  102011 |          1 |           0 | localhost |    57640 |           4
-  102012 |          3 |           0 | localhost |    57640 |           6
-  102013 |          3 |           0 | localhost |    57640 |           7
-  102014 |          3 |           0 | localhost |    57640 |          10
-  102015 |          1 |           0 | localhost |    57640 |          11
-(12 rows)
+SELECT pds.logicalrelid, pdsd.shardid, pdsd.shardstate
+	FROM pg_dist_shard_placement as pdsd
+	INNER JOIN pg_dist_shard as pds
+	ON pdsd.shardid = pds.shardid
+	WHERE pds.logicalrelid = 'test_table_2'::regclass
+	ORDER BY shardid, nodeport;
+ logicalrelid | shardid | shardstate 
+--------------+---------+------------
+ test_table_2 |  210004 |          1
+ test_table_2 |  210004 |          3
+ test_table_2 |  210005 |          1
+ test_table_2 |  210005 |          3
+ test_table_2 |  210006 |          1
+ test_table_2 |  210006 |          3
+ test_table_2 |  210007 |          1
+ test_table_2 |  210007 |          1
+(8 rows)
 
+-- Create test_table_2 again to have healthy one
+DROP TABLE test_table_2;
+CREATE TABLE test_table_2(id int, value_1 int);
+SELECT create_distributed_table('test_table_2','id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+-- Kill the connection when we try to start the COPY 
+-- The query should abort
+SELECT citus.mitmproxy('conn.onQuery(query="FROM STDIN WITH").killall()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+\COPY test_table_2 FROM stdin delimiter ',';
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
+COPY test_table_2, line 1: "1,2"
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT pds.logicalrelid, pdsd.shardid, pdsd.shardstate
+	FROM pg_dist_shard_placement as pdsd
+	INNER JOIN pg_dist_shard as pds
+	ON pdsd.shardid = pds.shardid
+	WHERE pds.logicalrelid = 'test_table_2'::regclass
+	ORDER BY shardid, nodeport;
+ logicalrelid | shardid | shardstate 
+--------------+---------+------------
+ test_table_2 |  210008 |          1
+ test_table_2 |  210008 |          1
+ test_table_2 |  210009 |          1
+ test_table_2 |  210009 |          1
+ test_table_2 |  210010 |          1
+ test_table_2 |  210010 |          1
+ test_table_2 |  210011 |          1
+ test_table_2 |  210011 |          1
+(8 rows)
+
+-- Create test_table_2 again to have healthy one
+DROP TABLE test_table_2;
+CREATE TABLE test_table_2(id int, value_1 int);
+SELECT create_distributed_table('test_table_2','id');
+ create_distributed_table 
+--------------------------
+ 
+(1 row)
+
+-- When kill on copying data, it will be rollbacked and placements won't be labaled as invalid.
+-- Note that now we sent data to shard 210007, yet it is not marked as invalid.
+-- You can check the issue about this behaviour: https://github.com/citusdata/citus/issues/1933
 SELECT citus.mitmproxy('conn.onCopyData().kill()');
  mitmproxy 
 -----------
@@ -318,33 +381,31 @@ SELECT citus.mitmproxy('conn.onCopyData().kill()');
 (1 row)
 
 \COPY test_table_2 FROM stdin delimiter ',';
-ERROR:  failed to COPY to shard 102015 on localhost:57640
+ERROR:  failed to COPY to shard 210014 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
  
 (1 row)
 
-SELECT * FROM pg_dist_shard_placement;
- shardid | shardstate | shardlength | nodename  | nodeport | placementid 
----------+------------+-------------+-----------+----------+-------------
-  102008 |          1 |           0 | localhost |    57637 |           1
-  102010 |          1 |           0 | localhost |    57637 |           3
-  102012 |          1 |           0 | localhost |    57637 |           5
-  102013 |          1 |           0 | localhost |    57637 |           8
-  102014 |          1 |           0 | localhost |    57637 |           9
-  102015 |          1 |           0 | localhost |    57637 |          12
-  102009 |          1 |           0 | localhost |    57640 |           2
-  102011 |          1 |           0 | localhost |    57640 |           4
-  102012 |          3 |           0 | localhost |    57640 |           6
-  102013 |          3 |           0 | localhost |    57640 |           7
-  102014 |          3 |           0 | localhost |    57640 |          10
-  102015 |          1 |           0 | localhost |    57640 |          11
-(12 rows)
+SELECT pds.logicalrelid, pdsd.shardid, pdsd.shardstate
+	FROM pg_dist_shard_placement as pdsd
+	INNER JOIN pg_dist_shard as pds
+	ON pdsd.shardid = pds.shardid
+	WHERE pds.logicalrelid = 'test_table_2'::regclass
+	ORDER BY shardid, nodeport;
+ logicalrelid | shardid | shardstate 
+--------------+---------+------------
+ test_table_2 |  210012 |          1
+ test_table_2 |  210012 |          1
+ test_table_2 |  210013 |          1
+ test_table_2 |  210013 |          1
+ test_table_2 |  210014 |          1
+ test_table_2 |  210014 |          1
+ test_table_2 |  210015 |          1
+ test_table_2 |  210015 |          1
+(8 rows)
 
 DROP SCHEMA copy_distributed_table CASCADE;
-NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to table test_table
-drop cascades to view unhealthy_shard_count
-drop cascades to table test_table_2
+NOTICE:  drop cascades to table test_table_2
 SET search_path TO default;
