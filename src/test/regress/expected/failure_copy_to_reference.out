@@ -3,6 +3,7 @@
 -- 
 CREATE SCHEMA copy_reference_failure;
 SET search_path TO 'copy_reference_failure';
+SET citus.next_shard_id TO 130000;
 -- we don't want to see the prepared transaction numbers in the warnings
 SET client_min_messages TO ERROR;
 SELECT citus.mitmproxy('conn.allow()');
@@ -11,9 +12,6 @@ SELECT citus.mitmproxy('conn.allow()');
  
 (1 row)
 
--- With one placement COPY should error out and placement should stay healthy.
-SET citus.shard_replication_factor TO 1;
-SET citus.shard_count to 4;
 CREATE TABLE test_table(id int, value_1 int);
 SELECT create_reference_table('test_table');
  create_reference_table 
@@ -117,7 +115,7 @@ SELECT count(*) FROM test_table;
 (1 row)
 
 -- kill as soon as the coordinator sends COPY command
-SELECT citus.mitmproxy('conn.onQuery(query="COPY").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^COPY").kill()');
  mitmproxy 
 -----------
  
@@ -148,7 +146,7 @@ SELECT count(*) FROM test_table;
 (1 row)
 
 -- cancel as soon as the coordinator sends COPY command
-SELECT citus.mitmproxy('conn.onQuery(query="COPY").cancel(' ||  pg_backend_pid() || ')');
+SELECT citus.mitmproxy('conn.onQuery(query="^COPY").cancel(' ||  pg_backend_pid() || ')');
  mitmproxy 
 -----------
  
@@ -176,14 +174,14 @@ SELECT count(*) FROM test_table;
 (1 row)
 
 -- kill as soon as the worker sends CopyComplete
-SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY 3").kill()');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^COPY 3").kill()');
  mitmproxy 
 -----------
  
 (1 row)
 
 \copy test_table FROM STDIN DELIMITER ','
-ERROR:  failed to COPY to shard 102008 on localhost:57640
+ERROR:  failed to COPY to shard 130000 on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -203,7 +201,7 @@ SELECT count(*) FROM test_table;
 (1 row)
 
 -- cancel as soon as the coordinator sends CopyData
-SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY 3").cancel(' ||  pg_backend_pid() || ')');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^COPY 3").cancel(' ||  pg_backend_pid() || ')');
  mitmproxy 
 -----------
  
@@ -229,8 +227,40 @@ SELECT count(*) FROM test_table;
      0
 (1 row)
 
+-- kill the connection when we try to start the COPY 
+-- the query should abort
+SELECT citus.mitmproxy('conn.onQuery(query="FROM STDIN WITH").killall()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+\copy test_table FROM STDIN DELIMITER ','
+ERROR:  server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+CONTEXT:  while executing command on localhost:57640
+COPY test_table, line 1: "1,2"
+SELECT citus.mitmproxy('conn.allow()');
+ mitmproxy 
+-----------
+ 
+(1 row)
+
+SELECT * FROM unhealthy_shard_count;
+ count 
+-------
+     0
+(1 row)
+
+SELECT count(*) FROM test_table;
+ count 
+-------
+     0
+(1 row)
+
 -- killing on PREPARE should be fine, everything should be rollbacked
-SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^PREPARE TRANSACTION").kill()');
  mitmproxy 
 -----------
  
@@ -258,7 +288,7 @@ SELECT count(*) FROM test_table;
 (1 row)
 
 -- cancelling on PREPARE should be fine, everything should be rollbacked
-SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
+SELECT citus.mitmproxy('conn.onQuery(query="^PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
  mitmproxy 
 -----------
  
@@ -286,7 +316,7 @@ SELECT count(*) FROM test_table;
 
 -- killing on command complete of COMMIT PREPARE, we should see that the command succeeds
 -- and all the workers committed
-SELECT citus.mitmproxy('conn.onCommandComplete(command="COMMIT PREPARED").kill()');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^COMMIT PREPARED").kill()');
  mitmproxy 
 -----------
  
@@ -320,15 +350,13 @@ SELECT count(*) FROM test_table;
 
 TRUNCATE test_table;
 -- kill as soon as the coordinator sends COMMIT
-SELECT citus.mitmproxy('conn.onQuery(query="COMMIT").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^COMMIT").kill()');
  mitmproxy 
 -----------
  
 (1 row)
 
 \copy test_table FROM STDIN DELIMITER ','
-ERROR:  failure on connection marked as essential: localhost:57640
-CONTEXT:  COPY test_table, line 1: "1,2"
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -342,7 +370,7 @@ SELECT citus.mitmproxy('conn.allow()');
 SELECT recover_prepared_transactions();
  recover_prepared_transactions 
 -------------------------------
-                             0
+                             1
 (1 row)
 
 SELECT * FROM unhealthy_shard_count;
@@ -354,20 +382,24 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
  count 
 -------
-     0
+     3
 (1 row)
 
+TRUNCATE test_table;
 -- finally, test failing on ROLLBACK just after the coordinator
 -- sends the ROLLBACK so the command can be rollbacked
-SELECT citus.mitmproxy('conn.onQuery(query="ROLLBACK").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^ROLLBACK").kill()');
  mitmproxy 
 -----------
  
 (1 row)
 
 BEGIN;
+SET LOCAL client_min_messages TO WARNING;
 \copy test_table FROM STDIN DELIMITER ','
 ROLLBACK;
+WARNING:  connection not open
+CONTEXT:  while executing command on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -389,15 +421,18 @@ SELECT count(*) FROM test_table;
 -- but now kill just after the worker sends response to 
 -- ROLLBACK command, command should have been rollbacked
 -- both on the distributed table and the placements
-SELECT citus.mitmproxy('conn.onCommandComplete(command="ROLLBACK").kill()');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^ROLLBACK").kill()');
  mitmproxy 
 -----------
  
 (1 row)
 
 BEGIN;
-TRUNCATE test_table;
+SET LOCAL client_min_messages TO WARNING;
+\copy test_table FROM STDIN DELIMITER ','
 ROLLBACK;
+WARNING:  connection not open
+CONTEXT:  while executing command on localhost:57640
 SELECT citus.mitmproxy('conn.allow()');
  mitmproxy 
 -----------
@@ -422,13 +457,5 @@ SELECT count(*) FROM test_table;
      0
 (1 row)
 
-SET citus.multi_shard_commit_protocol TO '2pc';
-ALTER TABLE test_table ADD CONSTRAINT uniq UNIQUE (value_1);
-BEGIN;
-\copy test_table FROM STDIN DELIMITER ','
-\copy test_table FROM STDIN DELIMITER ','
-ERROR:  duplicate key value violates unique constraint "uniq_102008"
-DETAIL:  Key (value_1)=(2) already exists.
-COMMIT;
 DROP SCHEMA copy_reference_failure CASCADE;
 SET search_path TO default;

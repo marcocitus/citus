@@ -3,15 +3,12 @@
 -- 
 CREATE SCHEMA copy_reference_failure;
 SET search_path TO 'copy_reference_failure';
+SET citus.next_shard_id TO 130000;
 
 -- we don't want to see the prepared transaction numbers in the warnings
 SET client_min_messages TO ERROR;
 
 SELECT citus.mitmproxy('conn.allow()');
-
--- With one placement COPY should error out and placement should stay healthy.
-SET citus.shard_replication_factor TO 1;
-SET citus.shard_count to 4;
 
 CREATE TABLE test_table(id int, value_1 int);
 SELECT create_reference_table('test_table');
@@ -59,7 +56,7 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
 
 -- kill as soon as the coordinator sends COPY command
-SELECT citus.mitmproxy('conn.onQuery(query="COPY").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^COPY").kill()');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -70,7 +67,7 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
 
 -- cancel as soon as the coordinator sends COPY command
-SELECT citus.mitmproxy('conn.onQuery(query="COPY").cancel(' ||  pg_backend_pid() || ')');
+SELECT citus.mitmproxy('conn.onQuery(query="^COPY").cancel(' ||  pg_backend_pid() || ')');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -81,7 +78,7 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
 
 -- kill as soon as the worker sends CopyComplete
-SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY 3").kill()');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^COPY 3").kill()');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -92,7 +89,19 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
 
 -- cancel as soon as the coordinator sends CopyData
-SELECT citus.mitmproxy('conn.onCommandComplete(command="COPY 3").cancel(' ||  pg_backend_pid() || ')');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^COPY 3").cancel(' ||  pg_backend_pid() || ')');
+\copy test_table FROM STDIN DELIMITER ','
+1,2
+2,3
+3,4
+\.
+SELECT citus.mitmproxy('conn.allow()');
+SELECT * FROM unhealthy_shard_count;
+SELECT count(*) FROM test_table;
+
+-- kill the connection when we try to start the COPY 
+-- the query should abort
+SELECT citus.mitmproxy('conn.onQuery(query="FROM STDIN WITH").killall()');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -103,7 +112,7 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
 
 -- killing on PREPARE should be fine, everything should be rollbacked
-SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^PREPARE TRANSACTION").kill()');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -114,7 +123,7 @@ SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
 
 -- cancelling on PREPARE should be fine, everything should be rollbacked
-SELECT citus.mitmproxy('conn.onQuery(query="PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
+SELECT citus.mitmproxy('conn.onQuery(query="^PREPARE TRANSACTION").cancel(' ||  pg_backend_pid() || ')');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -126,7 +135,7 @@ SELECT count(*) FROM test_table;
 
 -- killing on command complete of COMMIT PREPARE, we should see that the command succeeds
 -- and all the workers committed
-SELECT citus.mitmproxy('conn.onCommandComplete(command="COMMIT PREPARED").kill()');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^COMMIT PREPARED").kill()');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -142,7 +151,7 @@ SELECT count(*) FROM test_table;
 TRUNCATE test_table;
 
 -- kill as soon as the coordinator sends COMMIT
-SELECT citus.mitmproxy('conn.onQuery(query="COMMIT").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^COMMIT").kill()');
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -156,11 +165,13 @@ SELECT citus.mitmproxy('conn.allow()');
 SELECT recover_prepared_transactions();
 SELECT * FROM unhealthy_shard_count;
 SELECT count(*) FROM test_table;
+TRUNCATE test_table;
 
 -- finally, test failing on ROLLBACK just after the coordinator
 -- sends the ROLLBACK so the command can be rollbacked
-SELECT citus.mitmproxy('conn.onQuery(query="ROLLBACK").kill()');
+SELECT citus.mitmproxy('conn.onQuery(query="^ROLLBACK").kill()');
 BEGIN;
+SET LOCAL client_min_messages TO WARNING;
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
@@ -174,27 +185,19 @@ SELECT count(*) FROM test_table;
 -- but now kill just after the worker sends response to 
 -- ROLLBACK command, command should have been rollbacked
 -- both on the distributed table and the placements
-SELECT citus.mitmproxy('conn.onCommandComplete(command="ROLLBACK").kill()');
+SELECT citus.mitmproxy('conn.onCommandComplete(command="^ROLLBACK").kill()');
 BEGIN;
-TRUNCATE test_table;
-ROLLBACK;
-SELECT citus.mitmproxy('conn.allow()');
-SELECT recover_prepared_transactions();
-SELECT * FROM unhealthy_shard_count;
-SELECT count(*) FROM test_table;
-
-SET citus.multi_shard_commit_protocol TO '2pc';
-ALTER TABLE test_table ADD CONSTRAINT uniq UNIQUE (value_1);
-BEGIN;
+SET LOCAL client_min_messages TO WARNING;
 \copy test_table FROM STDIN DELIMITER ','
 1,2
 2,3
 3,4
 \.
-\copy test_table FROM STDIN DELIMITER ','
-1,2
-\.
-COMMIT;
+ROLLBACK;
+SELECT citus.mitmproxy('conn.allow()');
+SELECT recover_prepared_transactions();
+SELECT * FROM unhealthy_shard_count;
+SELECT count(*) FROM test_table;
 
 DROP SCHEMA copy_reference_failure CASCADE;
 SET search_path TO default;
