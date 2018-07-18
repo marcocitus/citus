@@ -1414,6 +1414,32 @@ PlanAlterTableStmt(AlterTableStmt *alterTableStatement, const char *alterTableCo
 				constraint->skip_validation = true;
 			}
 		}
+		else if (alterTableType == AT_AddColumn)
+		{
+			ColumnDef *columnDefinition = (ColumnDef *) command->def;
+			List *columnConstraints = columnDefinition->constraints;
+
+			ListCell *columnConstraint = NULL;
+			foreach(columnConstraint, columnConstraints)
+			{
+				Constraint *constraint = (Constraint *) lfirst(columnConstraint);
+				if (constraint->contype == CONSTR_FOREIGN)
+				{
+					rightRelationId = RangeVarGetRelid(constraint->pktable, lockmode,
+													   alterTableStatement->missing_ok);
+
+					/*
+					 * Foreign constraint validations will be done in workers. If we do not
+					 * set this flag, PostgreSQL tries to do additional checking when we drop
+					 * to standard_ProcessUtility. standard_ProcessUtility tries to open new
+					 * connections to workers to verify foreign constraints while original
+					 * transaction is in process, which causes deadlock.
+					 */
+					constraint->skip_validation = true;
+					break;
+				}
+			}
+		}
 #if (PG_VERSION_NUM >= 100000)
 		else if (alterTableType == AT_AttachPartition)
 		{
@@ -4035,6 +4061,27 @@ SetupExecutionModeForAlterTable(Oid relationId, AlterTableCmd *command)
 		if (ConstraintIsAForeignKeyToReferenceTable(constraintName, relationId))
 		{
 			executeSequentially = true;
+		}
+	}
+	else if (alterTableType == AT_AddColumn)
+	{
+		ColumnDef *columnDefinition = (ColumnDef *) command->def;
+		List *columnConstraints = columnDefinition->constraints;
+
+		ListCell *columnConstraint = NULL;
+		foreach(columnConstraint, columnConstraints)
+		{
+			Constraint *constraint = (Constraint *) lfirst(columnConstraint);
+			if (constraint->contype == CONSTR_FOREIGN)
+			{
+				Oid rightRelationId = RangeVarGetRelid(constraint->pktable, NoLock,
+													   false);
+				if (IsDistributedTable(rightRelationId) &&
+					PartitionMethod(rightRelationId) == DISTRIBUTE_BY_NONE)
+				{
+					executeSequentially = true;
+				}
+			}
 		}
 	}
 	else if (alterTableType == AT_DropColumn || alterTableType == AT_AlterColumnType)
