@@ -618,6 +618,37 @@ multi_ProcessUtility(PlannedStmt *pstmt,
 						InvalidateForeignKeyGraph();
 					}
 				}
+				else if (alterTableType == AT_AddColumn)
+				{
+					List *columnConstraints = NIL;
+					ListCell *columnConstraint = NULL;
+					Oid relationId = InvalidOid;
+					LOCKMODE lockmode = NoLock;
+
+					ColumnDef *columnDefinition = (ColumnDef *) command->def;
+					columnConstraints = columnDefinition->constraints;
+					if (columnConstraints)
+					{
+						ErrorIfUnsupportedAlterAddConstraintStmt(alterTableStatement);
+					}
+
+					lockmode = AlterTableGetLockLevel(alterTableStatement->cmds);
+					relationId = AlterTableLookupRelation(alterTableStatement, lockmode);
+					if (!OidIsValid(relationId))
+					{
+						continue;
+					}
+
+					foreach(columnConstraint, columnConstraints)
+					{
+						Constraint *constraint = (Constraint *) lfirst(columnConstraint);
+						if (constraint->contype == CONSTR_FOREIGN)
+						{
+							InvalidateForeignKeyGraph();
+							break;
+						}
+					}
+				}
 			}
 		}
 

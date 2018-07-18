@@ -585,3 +585,10 @@ SELECT relname, reloptions FROM pg_class WHERE relname LIKE 'another_index%' ORD
 
 -- get rid of the index
 DROP INDEX another_index;
+
+-- check if we fail properly when a column with un-supported constraint is added
+-- UNIQUE on non-distribution column is not supported
+CREATE TABLE test_table_1(id int);
+SELECT create_distributed_table('test_table_1', 'id');
+ALTER TABLE test_table_1 ADD COLUMN test_col int UNIQUE;
+DROP TABLE test_table_1;
