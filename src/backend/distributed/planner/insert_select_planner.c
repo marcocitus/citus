@@ -176,6 +176,15 @@ CreateInsertSelectPlan(Query *originalQuery,
 					   PlannerRestrictionContext *plannerRestrictionContext)
 {
 	DistributedPlan *distributedPlan = NULL;
+	DeferredErrorMessage *deferredError = NULL;
+
+	deferredError = ErrorIfOnConflictNotSupported(originalQuery);
+	if (deferredError != NULL)
+	{
+		distributedPlan = CitusMakeNode(DistributedPlan);
+		distributedPlan->planningError = deferredError;
+		return distributedPlan;
+	}
 
 	distributedPlan = CreateDistributedInsertSelectPlan(originalQuery,
 														plannerRestrictionContext);
